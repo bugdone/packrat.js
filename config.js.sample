@@ -1,0 +1,5 @@
+exports.accounts = [{username: 'user1', password: 'password1'},
+                    {username: 'user2', password: 'password2'},
+                    ];
+exports.replays_path = '/path/to/demos';
+
