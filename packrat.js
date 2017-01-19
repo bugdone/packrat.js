@@ -1,6 +1,7 @@
 var Steam = require("steam"),
     util = require("util"),
     config = require("./config.js"),
+    process = require("process"),
     fs = require("fs"),
     exec = require('child_process').execSync,
     csgo = require("csgo"),
@@ -9,7 +10,7 @@ var Steam = require("steam"),
     protos = require("csgo/helpers/protos"),
     crypto = require("crypto");
 
-function MakeSha(bytes) {
+function makeSha(bytes) {
     var hash = crypto.createHash('sha1');
     hash.update(bytes);
     return hash.digest();
@@ -66,88 +67,156 @@ function downloadMatches(matchList) {
     }
 }
 
-function onSteamSentry(sentry) {
-    util.log("Received sentry.");
-    fs.writeFileSync(sentryPath, sentry);
-};
-
-function onSteamLogOn(response) {
-    if (response.eresult == Steam.EResult.OK) {
-        util.log('Logged in!');
-    } else {
-        util.log('Error logging in', account.username, response);
-        process.exit();
-    }
-    steamFriends.setPersonaState(Steam.EPersonaState.Busy);
-
-    util.log("Logged on.");
-    util.log("Current SteamID64: " + bot.steamID);
-    util.log("Account ID: " + CSGOCli.ToAccountID(bot.steamID));
-
-    CSGOCli.launch();
-};
-
-var bot = new Steam.SteamClient(),
-    steamUser = new Steam.SteamUser(bot),
-    steamFriends = new Steam.SteamFriends(bot),
-    steamGC = new Steam.SteamGameCoordinator(bot, 730),
-    CSGOCli = new csgo.CSGOClient(steamUser, steamGC, false),
-    account, sentryPath, logOnDetails = {},
-    accountNumber = -1;
-
-CSGOCli.on("unhandled", function (message) {
-    util.log("Unhandled msg");
-    util.log(message);
-}).on("ready", function () {
-    util.log("node-csgo ready.");
-    CSGOCli.requestRecentGames();
-    CSGOCli.on("matchList", function (list) {
-        util.log("Got match list!", list.matches.length);
-        if (list.matches && list.matches.length > 0)
-            downloadMatches(list.matches);
-        if (nextAccount())
-            bot.connect();
-        else
-            process.exit();
-    });
-}).on("unready", function onUnready() {
-    util.log("node-csgo unready.");
-}).on("unhandled", function (kMsg) {
-    util.log("UNHANDLED MESSAGE " + kMsg);
-});
-
-function nextAccount() {
-    accountNumber++;
-    if (accountNumber >= config.accounts.length)
-        return false;
-    account = config.accounts[accountNumber];
-    sentryPath = account.username + '.sentry';
-    logOnDetails = {
-        "account_name": account.username,
-        "password": account.password,
-    };
+function hasSentry(account) {
     try {
-        var sentry = fs.readFileSync(account.username + '.sentry');
-        if (sentry.length)
-            logOnDetails.sha_sentryfile = MakeSha(sentry);
+        fs.readFileSync(account.username + '.sentry');
     } catch (e) {
-        util.log(e);
-        var authCode = readlineSync.question('AuthCode: ');
-        if (authCode)
-            logOnDetails.auth_code = authCode;
+        return false;
     }
     return true;
 }
 
-nextAccount();
-bot.connect();
+function downloadMatchesForAccount() {
+    var bot = new Steam.SteamClient(),
+        steamUser = new Steam.SteamUser(bot),
+        steamGC = new Steam.SteamGameCoordinator(bot, 730),
+        CSGOCli = new csgo.CSGOClient(steamUser, steamGC, false),
+        username = process.argv[2],
+        password = process.argv[3],
+        sentryPath = username + '.sentry',
+        logOnDetails = {
+            "account_name": username,
+            "password": password,
+        };
 
-steamUser.on('updateMachineAuth', function (response, callback) {
-    fs.writeFileSync(sentryPath, response.bytes);
-    callback({ sha_file: MakeSha(response.bytes) });
-});
-bot.on("logOnResponse", onSteamLogOn)
-    .on('sentry', onSteamSentry)
-    .on('connected', function () {
+    try {
+        var sentry = fs.readFileSync(username + '.sentry');
+        if (sentry.length)
+            logOnDetails.sha_sentryfile = makeSha(sentry);
+    } catch (e) {
+        util.log('Cannot read sentry for', account.username, e);
+        process.exit(1);
+    }
+
+    CSGOCli.on("unhandled", function (message) {
+        util.log("Unhandled msg");
+        util.log(message);
+    }).on("ready", function () {
+        CSGOCli.requestRecentGames();
+        CSGOCli.on("matchList", function (list) {
+            if (list.matches && list.matches.length > 0)
+                downloadMatches(list.matches);
+            process.exit(0);
+        });
+    }).on("unready", function onUnready() {
+        util.log("node-csgo unready.");
+    }).on("unhandled", function (kMsg) {
+        util.log("UNHANDLED MESSAGE " + kMsg);
+    });
+
+    steamUser.on('updateMachineAuth', function (response, callback) {
+        fs.writeFileSync(sentryPath, response.bytes);
+        callback({ sha_file: makeSha(response.bytes) });
+    });
+    bot.on("logOnResponse", function (response) {
+        util.log('Attempt to log in', logOnDetails);
+        if (response.eresult != Steam.EResult.OK) {
+            util.log('Error logging in', username, response, logOnDetails);
+            process.exit();
+        }
+        util.log("Logged in SteamID64: " + bot.steamID, username);
+        CSGOCli.launch();
+    }).on('sentry', function onSteamSentry(sentry) {
+        util.log("Received sentry.");
+        fs.writeFileSync(sentryPath, sentry);
+    }).on('connected', function () {
         steamUser.logOn(logOnDetails);
     });
+    bot.connect();
+}
+
+function createSentryFiles() {
+    var bot = new Steam.SteamClient(),
+        steamUser = new Steam.SteamUser(bot),
+        account, sentryPath, logOnDetails = {},
+        accountNumber = -1,
+        SLEEP_TIME = 5000,
+        accounts = config.accounts.filter(function (a) { return !hasSentry(a); });
+
+    function nextAccount() {
+        accountNumber++;
+        for (; accountNumber < accounts.length; accountNumber++) {
+            account = accounts[accountNumber];
+            sentryPath = account.username + '.sentry';
+            logOnDetails = {
+                "account_name": account.username,
+                "password": account.password,
+            };
+            return true;
+        }
+        return false;
+    }
+
+    function onSteamLogOn(response) {
+        util.log('Attempted to log in user', logOnDetails.account_name, '(result ' + response.eresult + ')');
+        if (response.eresult != Steam.EResult.OK) {
+            if (response.email_domain) {
+                var authCode = readlineSync.question('AuthCode: ');
+                if (authCode)
+                    logOnDetails.auth_code = authCode;
+                bot.connect();
+            } else {
+                util.log("Failed to log in", response);
+                util.log("exiting");
+                process.exit();
+            }
+        } else if (logOnDetails.sha_sentryfile)
+            loginNextAccount();
+    };
+
+    function loginNextAccount() {
+        if (nextAccount())
+            bot.connect();
+        else
+            process.exit();
+    }
+
+    function writeSentry(sentry, f) {
+        fs.writeFileSync(sentryPath, sentry);
+        if (f)
+            f();
+        logOnDetails.sha_sentryfile = makeSha(sentry);
+        logOnDetails.auth_code = null;
+        // Have to sleep on the sentry for a bit otherwise the server forgets it
+        // https://github.com/seishun/node-steam/issues/67
+        setTimeout(function () { bot.connect(); }, SLEEP_TIME);
+    }
+    steamUser.on('updateMachineAuth', function (response, callback) {
+        writeSentry(response.bytes, function () { callback({ sha_file: makeSha(response.bytes) }); });
+    });
+    bot.on("logOnResponse", onSteamLogOn)
+        .on('sentry', function onSteamSentry(sentry) {
+            util.log("Received sentry.");
+            writeSentry(sentry);
+        })
+        .on('connected', function () {
+            steamUser.logOn(logOnDetails);
+        })
+        .on('error', function onError() {
+            util.log("SteamClient error.");
+        });
+
+    loginNextAccount();
+}
+
+if (process.argv.length == 4) {
+    downloadMatchesForAccount();
+} else if (process.argv.length == 2) {
+    (function execute() {
+        var accounts = config.accounts.filter(hasSentry);
+        for (var i = 0; i < accounts.length; i++)
+            exec(sprintf('node %s %s %s', process.argv[1], accounts[i].username, accounts[i].password), { stdio: [0, 1, 2] });
+    })();
+} else if (process.argv.length == 3) {
+    createSentryFiles();
+}
