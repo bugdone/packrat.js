@@ -76,26 +76,43 @@ function hasSentry(account) {
     return true;
 }
 
-function downloadMatchesForAccount() {
+function downloadMatchesForAccounts() {
     var bot = new Steam.SteamClient(),
         steamUser = new Steam.SteamUser(bot),
         steamGC = new Steam.SteamGameCoordinator(bot, 730),
         CSGOCli = new csgo.CSGOClient(steamUser, steamGC, false),
-        username = process.argv[2],
-        password = process.argv[3],
-        sentryPath = username + '.sentry',
-        logOnDetails = {
-            "account_name": username,
-            "password": password,
-        };
+        sentryPath,
+        logOnDetails,
+        accountNumber = -1,
+        accounts = config.accounts.filter(hasSentry);
 
-    try {
-        var sentry = fs.readFileSync(username + '.sentry');
-        if (sentry.length)
-            logOnDetails.sha_sentryfile = makeSha(sentry);
-    } catch (e) {
-        util.log('Cannot read sentry for', account.username, e);
-        process.exit(1);
+    function nextAccount() {
+        accountNumber++;
+        for (; accountNumber < accounts.length; accountNumber++) {
+            account = accounts[accountNumber];
+            sentryPath = account.username + '.sentry';
+            logOnDetails = {
+                "account_name": account.username,
+                "password": account.password,
+            };
+            try {
+                var sentry = fs.readFileSync(account.username + '.sentry');
+                if (sentry.length)
+                    logOnDetails.sha_sentryfile = makeSha(sentry);
+            } catch (e) {
+                util.log('Cannot read sentry for', account.username, e);
+                process.exit(1);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    function loginNextAccount() {
+        if (nextAccount())
+            bot.connect();
+        else
+            process.exit();
     }
 
     CSGOCli.on("unhandled", function (message) {
@@ -103,11 +120,10 @@ function downloadMatchesForAccount() {
         util.log(message);
     }).on("ready", function () {
         CSGOCli.requestRecentGames();
-        CSGOCli.on("matchList", function (list) {
-            if (list.matches && list.matches.length > 0)
-                downloadMatches(list.matches);
-            process.exit(0);
-        });
+    }).on("matchList", function (list) {
+        if (list.matches && list.matches.length > 0)
+            downloadMatches(list.matches);
+        loginNextAccount();
     }).on("unready", function onUnready() {
         util.log("node-csgo unready.");
     }).on("unhandled", function (kMsg) {
@@ -119,12 +135,11 @@ function downloadMatchesForAccount() {
         callback({ sha_file: makeSha(response.bytes) });
     });
     bot.on("logOnResponse", function (response) {
-        util.log('Attempt to log in', logOnDetails);
         if (response.eresult != Steam.EResult.OK) {
-            util.log('Error logging in', username, response, logOnDetails);
+            util.log('Error logging in', logOnDetails.account_name, response);
             process.exit();
         }
-        util.log("Logged in SteamID64: " + bot.steamID, username);
+        util.log("Logged in SteamID64: " + bot.steamID, logOnDetails.account_name);
         CSGOCli.launch();
     }).on('sentry', function onSteamSentry(sentry) {
         util.log("Received sentry.");
@@ -132,7 +147,7 @@ function downloadMatchesForAccount() {
     }).on('connected', function () {
         steamUser.logOn(logOnDetails);
     });
-    bot.connect();
+    loginNextAccount();
 }
 
 function createSentryFiles() {
@@ -209,14 +224,8 @@ function createSentryFiles() {
     loginNextAccount();
 }
 
-if (process.argv.length == 4) {
-    downloadMatchesForAccount();
-} else if (process.argv.length == 2) {
-    (function execute() {
-        var accounts = config.accounts.filter(hasSentry);
-        for (var i = 0; i < accounts.length; i++)
-            exec(sprintf('node %s %s %s', process.argv[1], accounts[i].username, accounts[i].password), { stdio: [0, 1, 2] });
-    })();
+if (process.argv.length == 2) {
+    downloadMatchesForAccounts();
 } else if (process.argv.length == 3) {
     createSentryFiles();
 }
