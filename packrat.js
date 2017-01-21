@@ -76,25 +76,23 @@ function hasSentry(account) {
     return true;
 }
 
-function downloadMatchesForAccounts() {
-    var bot = new Steam.SteamClient(),
-        steamUser = new Steam.SteamUser(bot),
-        steamGC = new Steam.SteamGameCoordinator(bot, 730),
-        CSGOCli = new csgo.CSGOClient(steamUser, steamGC, false),
-        sentryPath,
-        logOnDetails,
-        accountNumber = -1,
-        accounts = config.accounts.filter(hasSentry);
+var bot = new Steam.SteamClient(),
+    steamUser = new Steam.SteamUser(bot),
+    sentryPath,
+    logOnDetails = {},
+    accountNumber = -1,
+    accounts;
 
-    function nextAccount() {
-        accountNumber++;
-        for (; accountNumber < accounts.length; accountNumber++) {
-            account = accounts[accountNumber];
-            sentryPath = account.username + '.sentry';
-            logOnDetails = {
-                "account_name": account.username,
-                "password": account.password,
-            };
+function loginNextAccount(withSentry) {
+    accountNumber++;
+    for (; accountNumber < accounts.length; accountNumber++) {
+        account = accounts[accountNumber];
+        sentryPath = account.username + '.sentry';
+        logOnDetails = {
+            "account_name": account.username,
+            "password": account.password,
+        };
+        if (withSentry) {
             try {
                 var sentry = fs.readFileSync(account.username + '.sentry');
                 if (sentry.length)
@@ -103,17 +101,22 @@ function downloadMatchesForAccounts() {
                 util.log('Cannot read sentry for', account.username, e);
                 process.exit(1);
             }
-            return true;
         }
-        return false;
+        bot.connect();
+        return;
     }
+    process.exit();
+}
 
-    function loginNextAccount() {
-        if (nextAccount())
-            bot.connect();
-        else
-            process.exit();
-    }
+bot.on('connected', function () {
+    steamUser.logOn(logOnDetails);
+}).on('error', function onError() {
+    util.log("SteamClient error.");
+});
+
+function downloadMatchesForAccounts() {
+    var steamGC = new Steam.SteamGameCoordinator(bot, 730),
+        CSGOCli = new csgo.CSGOClient(steamUser, steamGC, false);
 
     CSGOCli.on("unhandled", function (message) {
         util.log("Unhandled msg");
@@ -123,7 +126,7 @@ function downloadMatchesForAccounts() {
     }).on("matchList", function (list) {
         if (list.matches && list.matches.length > 0)
             downloadMatches(list.matches);
-        loginNextAccount();
+        loginNextAccount(true);
     }).on("unready", function onUnready() {
         util.log("node-csgo unready.");
     }).on("unhandled", function (kMsg) {
@@ -144,33 +147,12 @@ function downloadMatchesForAccounts() {
     }).on('sentry', function onSteamSentry(sentry) {
         util.log("Received sentry.");
         fs.writeFileSync(sentryPath, sentry);
-    }).on('connected', function () {
-        steamUser.logOn(logOnDetails);
     });
-    loginNextAccount();
+    loginNextAccount(true);
 }
 
 function createSentryFiles() {
-    var bot = new Steam.SteamClient(),
-        steamUser = new Steam.SteamUser(bot),
-        account, sentryPath, logOnDetails = {},
-        accountNumber = -1,
-        SLEEP_TIME = 5000,
-        accounts = config.accounts.filter(function (a) { return !hasSentry(a); });
-
-    function nextAccount() {
-        accountNumber++;
-        for (; accountNumber < accounts.length; accountNumber++) {
-            account = accounts[accountNumber];
-            sentryPath = account.username + '.sentry';
-            logOnDetails = {
-                "account_name": account.username,
-                "password": account.password,
-            };
-            return true;
-        }
-        return false;
-    }
+    var SLEEP_TIME = 5000;
 
     function onSteamLogOn(response) {
         util.log('Attempted to log in user', logOnDetails.account_name, '(result ' + response.eresult + ')');
@@ -189,13 +171,6 @@ function createSentryFiles() {
             loginNextAccount();
     };
 
-    function loginNextAccount() {
-        if (nextAccount())
-            bot.connect();
-        else
-            process.exit();
-    }
-
     function writeSentry(sentry, f) {
         fs.writeFileSync(sentryPath, sentry);
         if (f)
@@ -213,19 +188,15 @@ function createSentryFiles() {
         .on('sentry', function onSteamSentry(sentry) {
             util.log("Received sentry.");
             writeSentry(sentry);
-        })
-        .on('connected', function () {
-            steamUser.logOn(logOnDetails);
-        })
-        .on('error', function onError() {
-            util.log("SteamClient error.");
         });
 
     loginNextAccount();
 }
 
 if (process.argv.length == 2) {
+    accounts = config.accounts.filter(hasSentry);
     downloadMatchesForAccounts();
 } else if (process.argv.length == 3) {
+    accounts = config.accounts.filter(function (a) { return !hasSentry(a); });
     createSentryFiles();
 }
