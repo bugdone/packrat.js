@@ -1,0 +1,13 @@
+{
+  "name": "packrat.js",
+  "version": "0.0.0",
+  "description": "CS:GO MM demo downloader",
+  "main": "config.js",
+  "dependencies": {
+    "csgo": "^1.5.2",
+    "readline-sync": "^1.4.5",
+    "sprintf-js": "^1.0.3",
+    "steam": "^1.4.0"
+  },
+  "license": "MIT"
+}
