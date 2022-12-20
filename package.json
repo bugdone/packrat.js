@@ -4,12 +4,14 @@
   "description": "CS:GO MM demo downloader",
   "main": "config.js",
   "dependencies": {
-    "csgo": "^1.5.7",
-    "readline-sync": "^1.4.9",
+    "axios": "^1.1.3",
+    "csgo": "^1.5.15",
+    "readline-sync": "^1.4.10",
     "sprintf": "^0.1.5",
-    "sprintf-js": "^1.1.1",
-    "sprintfjs": "^1.2.10",
-    "steam": "^1.4.0"
+    "sprintf-js": "^1.1.2",
+    "sprintfjs": "^1.2.17",
+    "steam": "^1.4.1",
+    "steam-resources": "github:seishun/node-steam-resources"
   },
   "license": "MIT"
 }

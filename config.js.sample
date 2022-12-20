@@ -3,3 +3,12 @@ exports.accounts = [{username: 'user1', password: 'password1'},
                     ];
 exports.replays_path = '/path/to/demos';
 
+exports.auth_accounts = [
+  {
+    username: "user1",
+    auth_code: "GAME-AUTH-CODE",
+    steam_id: "70000000123456789",
+  }
+];
+
+exports.steam_api_key = "STEAM_API_KEY";

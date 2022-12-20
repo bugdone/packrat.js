@@ -7,8 +7,8 @@ var Steam = require("steam"),
   csgo = require("csgo"),
   sprintf = require("sprintf-js").sprintf,
   readlineSync = require("readline-sync"),
-  protos = require("csgo/helpers/protos"),
-  https = require("https"),
+  protos = require("steam-resources"),
+  axios = require("axios"),
   crypto = require("crypto");
 
 function makeSha(bytes) {
@@ -62,14 +62,12 @@ function downloadMatches(matchList) {
         match.watchablematchinfo.tv_port,
         match.watchablematchinfo.server_ip
       );
-    var dotDemDotInfo = dotDem + ".info";
+    var dotDemDotInfo = dotDem + ".json";
     if (!fileExists(dotDem)) downloadLink(rs.map, dotDem);
     if (!fileExists(dotDemDotInfo)) {
       rs.map = null;
       util.log("Creating", dotDemDotInfo);
-      var dotInfoData =
-        protos.CMsgGCCStrike15_v2_MatchmakingServerRoundStats.encode(rs);
-      fs.writeFileSync(dotDemDotInfo, dotInfoData.buffer);
+      fs.writeFileSync(dotDemDotInfo, '{"timestamp": ' + match.matchtime + "}");
     }
   }
 }
@@ -88,6 +86,10 @@ var bot = new Steam.SteamClient(),
   sentryPath,
   logOnDetails = {},
   accountNumber = -1,
+  doneDownloadingAuth = false,
+  matchCodeToPersist = "",
+  authAccountNumber = -1,
+  CSGOCli,
   accounts;
 
 Steam.servers = JSON.parse(fs.readFileSync("servers"));
@@ -124,21 +126,69 @@ bot
     util.log("SteamClient error.");
   });
 
+async function onReady() {
+  if (!doneDownloadingAuth) {
+    if (matchCodeToPersist) {
+      let authAccount = config.auth_accounts[authAccountNumber];
+      let lastMatchPath = authAccount.username + ".lastmatch";
+
+      fs.writeFileSync(lastMatchPath, matchCodeToPersist);
+      matchCodeToPersist = null;
+    } else {
+      authAccountNumber++;
+      matchCodeToPersist = null;
+
+      if (authAccountNumber == config.auth_accounts.length) {
+        doneDownloadingAuth = true;
+        onReady();
+        return;
+      }
+    }
+
+    let authAccount = config.auth_accounts[authAccountNumber];
+    let lastMatchPath = authAccount.username + ".lastmatch";
+    var knowncode = fs.readFileSync(lastMatchPath);
+    console.log(
+      "Downloading matches for auth account",
+      authAccount["username"],
+      "last match code",
+      knowncode
+    );
+
+    if (knowncode) {
+      knowncode = await getNextMatchCode(authAccount, knowncode);
+      console.log("Next code for ", authAccount["username"], knowncode);
+
+      matchCodeToPersist = knowncode;
+
+      if (knowncode) {
+        let decoded = new csgo.SharecodeDecoder(knowncode).decode();
+
+        CSGOCli.requestGame(
+          decoded.matchId,
+          decoded.outcomeId,
+          parseInt(decoded.tokenId)
+        );
+      } else onReady();
+    } else onReady();
+  } else CSGOCli.requestRecentGames();
+}
+
 function downloadMatchesForAccounts() {
-  var steamGC = new Steam.SteamGameCoordinator(bot, 730),
-    CSGOCli = new csgo.CSGOClient(steamUser, steamGC, false);
+  var steamGC = new Steam.SteamGameCoordinator(bot, 730);
+  CSGOCli = new csgo.CSGOClient(steamUser, steamGC, false);
 
   CSGOCli.on("unhandled", function (message) {
     util.log("Unhandled msg");
     util.log(message);
   })
-    .on("ready", function () {
-      CSGOCli.requestRecentGames();
-    })
+    .on("ready", onReady)
     .on("matchList", function (list) {
       if (list.matches && list.matches.length > 0)
         downloadMatches(list.matches);
-      loginNextAccount(true);
+
+      if (doneDownloadingAuth) loginNextAccount(true);
+      else onReady();
     })
     .on("unready", function onUnready() {
       util.log("node-csgo unready.");
@@ -216,6 +266,36 @@ function createSentryFiles() {
     });
 
   loginNextAccount();
+}
+
+async function getNextMatchCode(authUser, lastMatch) {
+  var url =
+    "https://api.steampowered.com/ICSGOPlayers_730/GetNextMatchSharingCode/v1?key=" +
+    config.steam_api_key +
+    "&steamid=" +
+    authUser.steam_id +
+    "&steamidkey=" +
+    authUser.auth_code +
+    "&knowncode=" +
+    lastMatch;
+  util.log(url);
+
+  while (true) {
+    try {
+      const res = await axios.get(url);
+      console.log(res.status, res.headers, res.data);
+
+      if (res.status == 200) return res.data.result.nextcode;
+      else if (res.status == 202) return null;
+    } catch (error) {
+      console.error(error.response.status, error.response.data);
+
+      if (error.response.status >= 429) {
+        console.log("Sleeping");
+        await new Promise((r) => setTimeout(r, 5000));
+      } else return null;
+    }
+  }
 }
 
 if (process.argv.length == 2) {
