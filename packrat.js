@@ -92,7 +92,11 @@ var bot = new Steam.SteamClient(),
   CSGOCli,
   accounts;
 
-Steam.servers = JSON.parse(fs.readFileSync("servers"));
+try {
+  Steam.servers = JSON.parse(fs.readFileSync("servers"));
+} catch (e) {
+  util.log("Failed to open servers file", e);
+}
 
 function loginNextAccount(withSentry) {
   accountNumber++;
