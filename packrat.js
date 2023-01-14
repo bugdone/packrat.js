@@ -39,10 +39,20 @@ function downloadLink(link, path) {
   var bz2Path = path + ".bz2";
   try {
     exec("wget -nv -O " + bz2Path + " " + link);
+    const stats = fs.statSync(bz2Path);
+    if (stats.size < 1024 * 1024) {
+      util.log(`${bz2Path} has only ${stats.size} bytes!`);
+      throw new Error("");
+    }
+
     exec("bunzip2 " + bz2Path);
+
+    return true;
   } catch (e) {
     util.log("Error downloading replay", link);
   }
+
+  return false;
 }
 
 function downloadMatches(matchList) {
@@ -63,7 +73,14 @@ function downloadMatches(matchList) {
         match.watchablematchinfo.server_ip
       );
     var dotDemDotInfo = dotDem + ".json";
-    if (!fileExists(dotDem)) downloadLink(rs.map, dotDem);
+    if (!fileExists(dotDem)) {
+      if (!downloadLink(rs.map, dotDem)) {
+        if (matchCodeToPersist) {
+          matchCodeToPersist = null;
+          return;
+        }
+      }
+    }
     if (!fileExists(dotDemDotInfo)) {
       rs.map = null;
       util.log("Creating", dotDemDotInfo);
@@ -87,7 +104,7 @@ var bot = new Steam.SteamClient(),
   logOnDetails = {},
   accountNumber = -1,
   doneDownloadingAuth = false,
-  matchCodeToPersist = "",
+  matchCodeToPersist = null,
   authAccountNumber = -1,
   CSGOCli,
   accounts;
